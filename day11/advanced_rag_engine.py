@@ -17,6 +17,154 @@ from knowledge_base_optimizer import (
     QualityScorer, IncrementalUpdater, Chunk
 )
 
+# 导入 OpenAI 客户端（用于调用 DeepSeek API）
+try:
+    from openai import OpenAI
+except ImportError:
+    print("请安装 openai: pip install openai")
+    import sys
+    sys.exit(1)
+
+# 加载环境变量
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+
+class MockEmbeddingModel:
+    """
+    模拟嵌入模型
+
+    在没有真实嵌入 API 时使用简单的 TF-IDF 向量
+    """
+
+    def __init__(self, dimension: int = 128):
+        self.dimension = dimension
+
+    def embed(self, text: str) -> list:
+        """生成模拟嵌入向量"""
+        # 使用简单的哈希映射生成嵌入
+        vector = [0.0] * self.dimension
+        words = text.lower().split()
+        for word in words:
+            idx = hash(word) % self.dimension
+            vector[idx] += 1.0
+        # 归一化
+        norm = sum(v * v for v in vector) ** 0.5
+        if norm > 0:
+            vector = [v / norm for v in vector]
+        return vector
+
+
+class DeepSeekEmbeddingModel:
+    """
+    DeepSeek 嵌入模型
+    使用 DeepSeek API 生成文本嵌入
+
+    注意: DeepSeek 目前可能不提供公开的嵌入模型 API，
+    此类会自动回退到模拟嵌入模型
+    """
+
+    def __init__(self, api_key: str = None, use_mock_on_failure: bool = True):
+        """
+        初始化 DeepSeek 嵌入模型
+
+        Args:
+            api_key: DeepSeek API 密钥
+            use_mock_on_failure: API 失败时是否使用模拟嵌入
+        """
+        import os
+        self.api_key = api_key or os.getenv("DEEPSEEK_API_KEY")
+        self.use_mock_on_failure = use_mock_on_failure
+        self.mock_model = MockEmbeddingModel() if use_mock_on_failure else None
+        self._use_mock = False
+
+        if not self.api_key:
+            if use_mock_on_failure:
+                print("警告: 未设置 DEEPSEEK_API_KEY，使用模拟嵌入模型")
+                self._use_mock = True
+            else:
+                raise ValueError("请设置 DEEPSEEK_API_KEY 环境变量")
+        else:
+            self.client = OpenAI(
+                api_key=self.api_key,
+                base_url="https://api.deepseek.com"
+            )
+            self.model = "deepseek-embed"
+
+    def embed(self, text: str) -> list:
+        """
+        生成文本嵌入
+
+        Args:
+            text: 输入文本
+
+        Returns:
+            嵌入向量
+        """
+        if self._use_mock:
+            return self.mock_model.embed(text)
+
+        try:
+            response = self.client.embeddings.create(
+                model=self.model,
+                input=text
+            )
+            return response.data[0].embedding
+        except Exception as e:
+            if self.use_mock_on_failure:
+                print(f"警告: 嵌入 API 调用失败 ({e})，回退到模拟嵌入模型")
+                self._use_mock = True
+                return self.mock_model.embed(text)
+            raise
+
+
+class DeepSeekLLM:
+    """
+    DeepSeek 大语言模型
+    使用 DeepSeek V1 模型生成回答
+    """
+    
+    def __init__(self, api_key: str = None):
+        """
+        初始化 DeepSeek LLM
+        
+        Args:
+            api_key: DeepSeek API 密钥
+        """
+        import os
+        self.api_key = api_key or os.getenv("DEEPSEEK_API_KEY")
+        if not self.api_key:
+            raise ValueError("请设置 DEEPSEEK_API_KEY 环境变量")
+        
+        self.client = OpenAI(
+            api_key=self.api_key,
+            base_url="https://api.deepseek.com"
+        )
+        self.model = "deepseek-chat"
+    
+    def generate(self, prompt: str, temperature: float = 0.7, max_tokens: int = 1000) -> str:
+        """
+        生成回答
+        
+        Args:
+            prompt: 提示词
+            temperature: 温度参数
+            max_tokens: 最大生成token数
+            
+        Returns:
+            生成的回答
+        """
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=temperature,
+            max_tokens=max_tokens
+        )
+        return response.choices[0].message.content
+
 
 @dataclass
 class AdvancedRAGConfig:
@@ -91,14 +239,18 @@ class AdvancedRAGEngine:
     - 评估支持
     """
     
-    def __init__(self, config: Optional[AdvancedRAGConfig] = None):
+    def __init__(self, config: Optional[AdvancedRAGConfig] = None, api_key: str = None):
         """
         初始化进阶 RAG 引擎
         
         Args:
             config: 配置对象
+            api_key: DeepSeek API 密钥
         """
+        import os
+        
         self.config = config or AdvancedRAGConfig()
+        self.api_key = api_key or os.getenv("DEEPSEEK_API_KEY")
         
         # 组件
         self.cleaner = DocumentCleaner()
@@ -109,6 +261,10 @@ class AdvancedRAGEngine:
         )
         self.quality_scorer = QualityScorer()
         self.updater = IncrementalUpdater()
+        
+        # 模型
+        self.embedding_model = None
+        self.llm = None
         
         # 检索器
         self.bm25_retriever: Optional[BM25Retriever] = None
@@ -127,8 +283,20 @@ class AdvancedRAGEngine:
         self.query_cache: Dict[str, Tuple[List[SearchResult], float]] = {}
         
         # 初始化
+        self._init_models()
         self._init_retrievers()
         self._init_reranker()
+    
+    def _init_models(self):
+        """初始化模型"""
+        print("初始化 DeepSeek 模型...")
+        try:
+            self.embedding_model = DeepSeekEmbeddingModel(self.api_key)
+            self.llm = DeepSeekLLM(self.api_key)
+            print("DeepSeek 模型初始化成功!")
+        except Exception as e:
+            print(f"警告: 初始化 DeepSeek 模型失败: {e}")
+            print("将使用默认的模拟模型")
     
     def _init_retrievers(self):
         """初始化检索器"""
@@ -137,7 +305,7 @@ class AdvancedRAGEngine:
             b=self.config.bm25_b
         )
         
-        self.vector_retriever = VectorRetriever()
+        self.vector_retriever = VectorRetriever(embedding_model=self.embedding_model)
         
         if self.config.use_hybrid_retrieval:
             self.hybrid_retriever = HybridRetriever(
@@ -400,12 +568,20 @@ class AdvancedRAGEngine:
 请基于上下文回答问题，如果上下文中没有相关信息，请说明。回答要准确、简洁。
 """
         
-        # 实际应用中应调用 LLM
-        # response = self.llm.generate(prompt)
-        
-        # 模拟响应
-        return f"基于检索到的 {len(context)} 个相关文档，我为您回答：{query} 的问题..." \
-               f"\n\n相关内容已在上下文中提供。"
+        # 调用 LLM
+        if self.llm:
+            try:
+                response = self.llm.generate(prompt)
+                return response
+            except Exception as e:
+                print(f"生成答案失败: {e}")
+                # 模拟响应
+                return f"基于检索到的 {len(context)} 个相关文档，我为您回答：{query} 的问题..." \
+                       f"\n\n相关内容已在上下文中提供。"
+        else:
+            # 模拟响应
+            return f"基于检索到的 {len(context)} 个相关文档，我为您回答：{query} 的问题..." \
+                   f"\n\n相关内容已在上下文中提供。"
     
     def query(
         self,
@@ -560,9 +736,22 @@ class AdvancedRAGEngine:
         self.query_cache.clear()
 
 
-# ==================== 使用示例 ====================
+def main():
+    """主函数"""
+    import argparse
 
-def demo_advanced_rag():
+    parser = argparse.ArgumentParser(description="高级 RAG 系统")
+    parser.add_argument("--mode", choices=["demo"], default="demo",
+                        help="运行模式")
+    parser.add_argument("--api-key", type=str, default=None,
+                        help="DeepSeek API 密钥")
+    args = parser.parse_args()
+
+    if args.mode == "demo":
+        demo_advanced_rag(args.api_key)
+
+
+def demo_advanced_rag(api_key=None):
     """演示进阶 RAG 系统"""
     
     print("=" * 70)
@@ -591,7 +780,7 @@ def demo_advanced_rag():
     
     # 创建引擎
     print("\n创建 RAG 引擎...")
-    engine = AdvancedRAGEngine(config)
+    engine = AdvancedRAGEngine(config, api_key=api_key)
     
     # 准备文档
     documents = [
@@ -700,7 +889,13 @@ config = AdvancedRAGConfig(
     initial_top_k=20,
     final_top_k=5
 )
+
+# 方法 1: 通过环境变量设置 API KEY
+# 在 .env 文件中设置 DEEPSEEK_API_KEY=your_api_key
 engine = AdvancedRAGEngine(config)
+
+# 方法 2: 直接传入 API KEY
+# engine = AdvancedRAGEngine(config, api_key="your_api_key")
 
 # 2. 添加文档
 from hybrid_retrieval import Document
@@ -730,4 +925,4 @@ results = engine.evaluate(eval_data)
 
 
 if __name__ == "__main__":
-    demo_advanced_rag()
+    main()

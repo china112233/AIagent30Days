@@ -149,12 +149,18 @@ class DocumentCleaner:
     def clean_document(self, doc: Document, **kwargs) -> Document:
         """清洗文档"""
         cleaned_content = self.clean(doc.content, **kwargs)
-        return Document(
+        # 安全获取quality_score属性，如果不存在则使用默认值
+        quality_score = getattr(doc, 'quality_score', None)
+        # 创建新的Document对象
+        new_doc = Document(
             id=doc.id,
             content=cleaned_content,
-            metadata=doc.metadata.copy(),
-            quality_score=doc.quality_score
+            metadata=doc.metadata.copy()
         )
+        # 如果存在quality_score，则添加到新文档
+        if quality_score is not None:
+            new_doc.quality_score = quality_score
+        return new_doc
 
 
 # ==================== 文档去重器 ====================
