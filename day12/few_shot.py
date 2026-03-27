@@ -170,7 +170,7 @@ def demo_shot_comparison():
     text_to_classify = "这家餐厅的服务太差了，等了一个小时才上菜，再也不来了！"
 
     # Zero-shot
-    zero_shot_prompt = f"请判断以下文本的情感（正面/负面/中性）：\n{text_toClassify}"
+    zero_shot_prompt = f"请判断以下文本的情感（正面/负面/中性）：\n{text_to_classify}"
 
     # One-shot
     one_shot_prompt = f"""
