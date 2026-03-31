@@ -526,7 +526,7 @@ for chunk in rag_chain.stream({"question": "..."}):
 
 ## 下一步
 
-Day 16 将学习 LangGraph，掌握基于图的 Agent 工作流编排，实现更复杂的多 Agent 协作。
+Day 16 将学习 LangGraph，内容包括：图编排、状态管理、循环与分支、多 Agent 工作流。
 
 ## 参考资料
 
