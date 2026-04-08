@@ -341,7 +341,7 @@ embed_model = OpenAIEmbedding(
 
 ## 下一步
 
-Day 18 将学习 LlamaIndex 进阶，内容包括：高级检索策略、多模态支持、知识图谱集成。
+Day 18 将学习 LlamaIndex 进阶，内容包括：高级检索策略、多模态支持、知识图谱集成、索引优化、外部工具集成。
 
 ## 参考资料
 
