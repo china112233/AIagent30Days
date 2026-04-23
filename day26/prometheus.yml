@@ -1,0 +1,22 @@
+# Prometheus 监控配置
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Agent API 服务监控
+  - job_name: 'agent-api'
+    static_configs:
+      - targets: ['agent-api:8000']
+    metrics_path: /metrics
+
+  # Prometheus 自监控
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Redis 监控（需要安装 redis_exporter）
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis:6379']
