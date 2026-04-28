@@ -1,24 +1,5 @@
 # Day 26: Agent API Dockerfile
-# 多阶段构建优化镜像大小
 
-# ==========================================
-# 构建阶段
-# ==========================================
-FROM python:3.11-slim as builder
-
-WORKDIR /app
-
-# 安装构建依赖
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
-
-# ==========================================
-# 生产阶段
-# ==========================================
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -28,8 +9,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# 从构建阶段复制依赖
-COPY --from=builder /root/.local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+# 安装Python依赖 (使用 --break-system-packages)
+COPY requirements.txt .
+RUN pip install --no-cache-dir --break-system-packages -r requirements.txt
 
 # 复制应用代码
 COPY . .
@@ -42,10 +24,11 @@ USER appuser
 ENV PYTHONUNBUFFERED=1
 ENV API_HOST=0.0.0.0
 ENV API_PORT=8000
+ENV PATH=/usr/local/bin:$PATH
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# 启动命令
-CMD ["uvicorn", "fastapi_agent:app", "--host", "0.0.0.0", "--port", "8000"]
+# 启动命令 - 使用python -m方式
+CMD ["python", "-m", "uvicorn", "fastapi_agent:app", "--host", "0.0.0.0", "--port", "8000"]

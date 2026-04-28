@@ -11,7 +11,7 @@ Day 27: 性能优化 - 并发处理
 
 import asyncio
 import time
-from typing import Dict, List, Optional, Callable, Tuple
+from typing import Dict, List, Optional, Callable, Tuple, Any
 from dataclasses import dataclass, field
 from datetime import datetime
 from collections import deque
